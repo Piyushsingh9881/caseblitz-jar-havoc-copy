@@ -3,9 +3,9 @@
  *
  * HOW TO USE
  * 1. Go to https://script.google.com → New project → paste this whole file → Save.
- * 2. Select function `createJarSurvey` → Run → approve permissions (Forms + Sheets).
+ * 2. Select function "createJarSurvey" → Run → approve permissions (Forms + Sheets).
  * 3. Open View → Logs (or Execution log): copy the SHARE link and send it out.
- * 4. After you collect responses, select `summarizeResponses` → Run.
+ * 4. After you collect responses, select "summarizeResponses" → Run.
  *    A "Summary" tab appears in the linked Google Sheet with % for every question
  *    plus the headline numbers for slide 2.
  *
@@ -20,12 +20,22 @@ const Q = {
   JAR_LAST_OPEN: 'What was the main reason you last opened Jar?',
   GOAL: 'In the next 6 months, what (if anything) are you saving toward?',
   CONCEPT_GRID: 'How likely would you be to use each of these?',
-  OPEN_FREQ_NEW: 'If your savings app had these features, how often would you open it?',
+  OPEN_FREQ_NEW: 'If a savings app had these features, how often would you open it?',
   NO_NOTIF: 'Would you still open it for these features with app notifications turned OFF?',
-  RAISE_SAVE: 'If you could see your goal filling up, would you increase your automatic daily saving to reach it faster?',
+  RAISE_SAVE: 'If you could see your goal filling up, would you save a little more each day to reach it faster?',
   SQUAD_SIZE: 'How many friends would you save with in a shared goal?',
   BOOST_MIN: 'What is the smallest weekly brand bonus that would make you check the app?',
 };
+
+// Concept intro - worded so people who don't use any savings app can answer too.
+const CONCEPT_TEXT =
+  'Imagine a savings app that automatically saves small amounts for you (for example, by rounding up your UPI payments), with these features:\n\n' +
+  '① GOAL JARS – split your savings into named goals (e.g. “Goa trip”, “New phone”) and see progress as a % of each goal. Saving stays automatic – nothing extra to do.\n\n' +
+  '② SQUAD JARS – save toward a shared goal (like a trip) with 2–5 friends. Everyone’s money stays in their own account; you only see each other’s progress %.\n\n' +
+  '③ MONDAY BOOSTS – every Monday, brands (e.g. travel or event partners) offer small bonuses to your goal if you hit a milestone that week.\n\n' +
+  '④ SUNDAY WRAP – a 1-minute weekly recap: what you saved automatically and how close you are to your goal.';
+const RAISE_CHOICES = ['Yes – by ₹5–10 a day', 'Yes – by more than ₹10 a day', 'Maybe', 'No', 'I don’t save regularly'];
+const JAR_YES = ['Yes, I use it now', 'I used it before but stopped'];
 
 function createJarSurvey() {
   const form = FormApp.create('Student Money & Savings Apps – 3-minute survey');
@@ -90,13 +100,7 @@ function createJarSurvey() {
 
   // ---------------- Section 4: Concept test ----------------
   form.addPageBreakItem().setTitle('A new idea – quick reactions')
-    .setHelpText(
-      'Imagine your savings app (with automatic saving, like round-offs) added these:\n\n' +
-      '① GOAL JARS – split your savings into named goals (e.g. “Goa trip”, “New phone”) and see progress as a % of each goal. Saving stays automatic – nothing extra to do.\n\n' +
-      '② SQUAD JARS – save toward a shared goal (like a trip) with 2–5 friends. Everyone’s money stays in their own account; you only see each other’s progress %.\n\n' +
-      '③ MONDAY BOOSTS – every Monday, brands (e.g. travel or event partners) offer small bonuses to your goal if you hit a milestone that week.\n\n' +
-      '④ SUNDAY WRAP – a 1-minute weekly recap: what you saved automatically and how close you are to your goal.'
-    );
+    .setHelpText(CONCEPT_TEXT);
   // tests: adoption assumption (20% Y1)
   form.addGridItem().setTitle(Q.CONCEPT_GRID).setRequired(true)
     .setRows(['① Goal Jars', '② Squad Jars (with friends)', '③ Monday Boosts', '④ Sunday Wrap'])
@@ -111,7 +115,7 @@ function createJarSurvey() {
     .setChoiceValues(['Monday Boosts (bonus money)', 'Squad updates from friends', 'Sunday Wrap (my progress)', 'Checking the gold price', 'None of these']);
   // tests: +30% savings uplift assumption
   form.addMultipleChoiceItem().setTitle(Q.RAISE_SAVE).setRequired(true)
-    .setChoiceValues(['Yes – by ₹5–10 a day', 'Yes – by more than ₹10 a day', 'Maybe', 'No']);
+    .setChoiceValues(RAISE_CHOICES);
   // tests: 40% squad creators / 1 reactivated member per squad
   form.addMultipleChoiceItem().setTitle(Q.SQUAD_SIZE).setRequired(true)
     .setChoiceValues(['I’d rather save alone', '1–2 friends', '3–4 friends', '5 or more']);
@@ -144,14 +148,29 @@ function createJarSurvey() {
   Logger.log('Responses sheet:                ' + ss.getUrl());
 }
 
-/** Writes a "Summary" tab: % per answer for every closed question + slide-2 headline numbers. */
-function summarizeResponses() {
-  const props = PropertiesService.getScriptProperties();
-  const form = FormApp.openById(props.getProperty('FORM_ID'));
-  const ss = SpreadsheetApp.openById(props.getProperty('SHEET_ID'));
+/** Edits the LIVE form in place (same link) so people who don't use Jar or any savings app can answer every question. Safe to run twice. */
+function fixWordingForNonUsers() {
+  const form = FormApp.openById(PropertiesService.getScriptProperties().getProperty('FORM_ID'));
+  const changed = [];
+  form.getItems().forEach((it) => {
+    const t = it.getTitle();
+    if (t === 'If your savings app had these features, how often would you open it?') {
+      it.setTitle(Q.OPEN_FREQ_NEW); changed.push('open-frequency question');
+    }
+    if (t === 'If you could see your goal filling up, would you increase your automatic daily saving to reach it faster?') {
+      it.setTitle(Q.RAISE_SAVE); it.asMultipleChoiceItem().setChoiceValues(RAISE_CHOICES); changed.push('daily-saving question + new option');
+    }
+    if (it.getType() === FormApp.ItemType.PAGE_BREAK && t === 'A new idea – quick reactions') {
+      it.asPageBreakItem().setHelpText(CONCEPT_TEXT); changed.push('concept intro');
+    }
+  });
+  Logger.log(changed.length ? 'Updated: ' + changed.join(', ') : 'Nothing to change (already fixed).');
+}
+
+/** Counts answers for a set of responses. */
+function tally_(form, responses) {
   const T = FormApp.ItemType;
   const closed = [T.MULTIPLE_CHOICE, T.CHECKBOX, T.SCALE, T.LIST];
-
   const counts = {}, answered = {}, order = [];
   form.getItems().forEach((it) => {
     const type = it.getType();
@@ -160,10 +179,8 @@ function summarizeResponses() {
       const key = it.getTitle() + ' → ' + r; order.push(key); counts[key] = {}; answered[key] = 0;
     });
   });
-
-  const responses = form.getResponses();
-  const n = responses.length;
   const add = (key, v) => { counts[key][v] = (counts[key][v] || 0) + 1; };
+  let goalYes = 0, goalBase = 0;
   responses.forEach((resp) => resp.getItemResponses().forEach((ir) => {
     const item = ir.getItem(), title = item.getTitle(), a = ir.getResponse();
     if (item.getType() === T.GRID) {
@@ -174,56 +191,61 @@ function summarizeResponses() {
       answered[title]++;
       (Array.isArray(a) ? a : [a]).forEach((v) => add(title, String(v)));
     }
+    if (title === Q.GOAL) {
+      goalBase++;
+      if (a.some((v) => v !== 'Nothing specific – just saving' && v !== 'Not saving right now')) goalYes++;
+    }
   }));
-
-  const pct = (key, answers) => {
-    if (!answered[key]) return 'n/a';
-    const c = answers.reduce((s, v) => s + (counts[key][v] || 0), 0);
-    return Math.round((100 * c) / answered[key]) + '%  (' + c + '/' + answered[key] + ')';
+  const fmt = (c, d) => (d ? Math.round((100 * c) / d) + '%  (' + c + '/' + d + ')' : 'n/a');
+  return {
+    n: responses.length, counts, answered, order,
+    pct: (key, answers) => fmt(answers.reduce((s, v) => s + ((counts[key] && counts[key][v]) || 0), 0), answered[key] || 0),
+    goalAny: () => fmt(goalYes, goalBase),
   };
-  const gridKey = (row) => Q.CONCEPT_GRID + ' → ' + row;
-  const goalAny = () => {
-    // % who ticked at least one concrete goal (not "Nothing specific" / "Not saving")
-    let yes = 0, base = 0;
-    responses.forEach((resp) => resp.getItemResponses().forEach((ir) => {
-      if (ir.getItem().getTitle() !== Q.GOAL) return;
-      base++;
-      const a = ir.getResponse();
-      if (a.some((v) => v !== 'Nothing specific – just saving' && v !== 'Not saving right now')) yes++;
-    }));
-    return base ? Math.round((100 * yes) / base) + '%  (' + yes + '/' + base + ')' : 'n/a';
-  };
+}
 
-  const headline = [
-    ['HEADLINE NUMBERS FOR SLIDE 2 / APPENDIX', ''],
-    ['Total responses (n)', n],
-    ['Students (UG + PG)', pct(Q.ROLE, ['College student (UG)', 'College student (PG)'])],
-    ['Jar users (now or before)', pct(Q.JAR_USE, ['Yes, I use it now', 'I used it before but stopped'])],
-    ['Jar users who open it monthly or less', pct(Q.JAR_OPEN_FREQ, ['About once a month', 'Rarely / almost never'])],
-    ['Last Jar open was to check balance or withdraw', pct(Q.JAR_LAST_OPEN, ['Check my balance', 'Withdraw / sell gold'])],
-    ['Have a concrete savings goal in next 6 months', goalAny()],
-    ['Saving for a trip with friends', pct(Q.GOAL, ['A trip with friends'])],
-    ['Would use Goal Jars (probably + definitely)', pct(gridKey('① Goal Jars'), ['Probably', 'Definitely'])],
-    ['Would use Squad Jars (probably + definitely)', pct(gridKey('② Squad Jars (with friends)'), ['Probably', 'Definitely'])],
-    ['Would open 2–3×/week or more', pct(Q.OPEN_FREQ_NEW, ['Daily', '2–3 times a week'])],
-    ['Would open even with notifications OFF (yes)', pct(Q.NO_NOTIF, ['Yes'])],
-    ['Would raise daily saving to hit goal faster', pct(Q.RAISE_SAVE, ['Yes – by ₹5–10 a day', 'Yes – by more than ₹10 a day'])],
-    ['Would save with 1+ friends', pct(Q.SQUAD_SIZE, ['1–2 friends', '3–4 friends', '5 or more'])],
-    ['A ₹20-or-less weekly bonus is enough to check', pct(Q.BOOST_MIN, ['₹10', '₹20'])],
+/** Writes a "Summary" tab: headline numbers split All / Jar users / non-users, then % per answer for every question. */
+function summarizeResponses() {
+  const props = PropertiesService.getScriptProperties();
+  const form = FormApp.openById(props.getProperty('FORM_ID'));
+  const ss = SpreadsheetApp.openById(props.getProperty('SHEET_ID'));
+  const all = form.getResponses();
+  const isJar = (resp) => resp.getItemResponses().some((ir) => ir.getItem().getTitle() === Q.JAR_USE && JAR_YES.indexOf(ir.getResponse()) >= 0);
+  const groups = [['All', all], ['Jar users (now or before)', all.filter(isJar)], ['Never / barely used Jar', all.filter((r) => !isJar(r))]];
+  const stats = groups.map((g) => tally_(form, g[1]));
+  const grid = (row) => Q.CONCEPT_GRID + ' → ' + row;
+
+  const rows = [
+    ['Total responses (n)', (s) => s.n],
+    ['Students (UG + PG)', (s) => s.pct(Q.ROLE, ['College student (UG)', 'College student (PG)'])],
+    ['Jar users who open it monthly or less', (s) => s.pct(Q.JAR_OPEN_FREQ, ['About once a month', 'Rarely / almost never'])],
+    ['Last Jar open was to check balance or withdraw', (s) => s.pct(Q.JAR_LAST_OPEN, ['Check my balance', 'Withdraw / sell gold'])],
+    ['Have a concrete savings goal in next 6 months', (s) => s.goalAny()],
+    ['Saving for a trip with friends', (s) => s.pct(Q.GOAL, ['A trip with friends'])],
+    ['Would use Goal Jars (probably + definitely)', (s) => s.pct(grid('① Goal Jars'), ['Probably', 'Definitely'])],
+    ['Would use Squad Jars (probably + definitely)', (s) => s.pct(grid('② Squad Jars (with friends)'), ['Probably', 'Definitely'])],
+    ['Would open 2–3×/week or more', (s) => s.pct(Q.OPEN_FREQ_NEW, ['Daily', '2–3 times a week'])],
+    ['Would open even with notifications OFF (yes)', (s) => s.pct(Q.NO_NOTIF, ['Yes'])],
+    ['Would save more each day to hit goal faster', (s) => s.pct(Q.RAISE_SAVE, ['Yes – by ₹5–10 a day', 'Yes – by more than ₹10 a day'])],
+    ['Would save with 1+ friends', (s) => s.pct(Q.SQUAD_SIZE, ['1–2 friends', '3–4 friends', '5 or more'])],
+    ['A ₹20-or-less weekly bonus is enough to check', (s) => s.pct(Q.BOOST_MIN, ['₹10', '₹20'])],
   ];
+  const headline = [['HEADLINE NUMBERS FOR SLIDE 2'].concat(groups.map((g) => g[0]))]
+    .concat(rows.map((r) => [r[0]].concat(stats.map((s) => r[1](s)))));
 
   let sh = ss.getSheetByName('Summary');
   if (sh) sh.clear(); else sh = ss.insertSheet('Summary');
-  sh.getRange(1, 1, headline.length, 2).setValues(headline);
-  sh.getRange(1, 1).setFontWeight('bold');
+  sh.getRange(1, 1, headline.length, 4).setValues(headline);
+  sh.getRange(1, 1, 1, 4).setFontWeight('bold');
 
+  const A = stats[0];
   let row = headline.length + 2;
-  sh.getRange(row, 1, 1, 4).setValues([['Question', 'Answer', 'Count', '% of those who answered']]).setFontWeight('bold');
+  sh.getRange(row, 1, 1, 4).setValues([['Question (all respondents)', 'Answer', 'Count', '% of those who answered']]).setFontWeight('bold');
   row++;
   const out = [];
-  order.forEach((key) => {
-    Object.keys(counts[key]).sort((a, b) => counts[key][b] - counts[key][a]).forEach((ans, i) => {
-      out.push([i === 0 ? key : '', ans, counts[key][ans], answered[key] ? counts[key][ans] / answered[key] : 0]);
+  A.order.forEach((key) => {
+    Object.keys(A.counts[key]).sort((a, b) => A.counts[key][b] - A.counts[key][a]).forEach((ans, i) => {
+      out.push([i === 0 ? key : '', ans, A.counts[key][ans], A.answered[key] ? A.counts[key][ans] / A.answered[key] : 0]);
     });
   });
   if (out.length) {
@@ -231,5 +253,5 @@ function summarizeResponses() {
     sh.getRange(row, 4, out.length, 1).setNumberFormat('0%');
   }
   sh.autoResizeColumns(1, 4);
-  Logger.log('Summary written (n=' + n + '): ' + ss.getUrl());
+  Logger.log('Summary written (n=' + A.n + '): ' + ss.getUrl());
 }
